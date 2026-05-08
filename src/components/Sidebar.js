@@ -10,7 +10,6 @@ const stepLabels = {
 };
 
 export function renderSidebar(root, state, actions) {
-  const currentStep = stepLabels[state.step] || 'Tracking';
   const targetLabel = state.meetingPoint ? 'Ponto A+ / encontro na rua' : 'Ponto A / GPS real';
 
   root.innerHTML = `
@@ -23,13 +22,6 @@ export function renderSidebar(root, state, actions) {
         </div>
       </div>
 
-      <section class="card hero-card">
-        <div class="pill">🇧🇷 Câmera limitada ao Brasil</div>
-        <h2>${currentStep}</h2>
-        <p>
-          Primeiro clique no mapa para marcar de onde o motoboy/restaurante sai. Depois o sistema pega sua localização sozinho, aproxima nela e abre uma mira fixa para você escolher onde o motoboy deve parar na sua rua.
-        </p>
-      </section>
 
       <section class="card flow-card">
         <div class="card-title">Fluxo correto</div>
@@ -54,7 +46,6 @@ export function renderSidebar(root, state, actions) {
       <section class="card">
         <div class="card-title">Ações</div>
         <button id="demo-flow" class="primary-btn">Usar exemplo completo em João Pessoa</button>
-        <button id="request-location" class="secondary-btn">Pedir localização novamente</button>
         <button id="simulate-again" class="secondary-btn">Simular novamente</button>
         <button id="stop-driver" class="ghost-btn">Parar simulação</button>
         <button id="reset-map" class="ghost-btn">Limpar tudo</button>
@@ -102,7 +93,6 @@ export function renderSidebar(root, state, actions) {
   `;
 
   root.querySelector('#demo-flow').addEventListener('click', actions.useDemoFlow);
-  root.querySelector('#request-location').addEventListener('click', actions.requestLocationAgain);
   root.querySelector('#simulate-again').addEventListener('click', actions.simulateDriverAgain);
   root.querySelector('#stop-driver').addEventListener('click', actions.stopSimulation);
   root.querySelector('#reset-map').addEventListener('click', actions.resetAll);

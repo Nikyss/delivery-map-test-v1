@@ -31,6 +31,19 @@ app.innerHTML = `
       </div>
 
       <div class="map-hint" id="map-hint">Clique no mapa para marcar de onde sai o motoboy/restaurante.</div>
+
+      <div class="location-loading" id="location-loading" aria-live="polite" aria-hidden="true">
+        <div class="location-loading-card">
+          <div class="location-spinner" aria-hidden="true"></div>
+          <div class="location-loading-kicker">Localização</div>
+          <div class="location-loading-title" id="location-loading-title">Aguarde, buscando seu endereço</div>
+          <div class="location-loading-text" id="location-loading-text">Solicitando permissão do navegador...</div>
+          <div class="location-loading-actions" id="location-loading-actions">
+            <button class="location-retry" id="retry-location" type="button">Tentar novamente</button>
+            <button class="location-cancel" id="cancel-location" type="button">Cancelar</button>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 `;
@@ -43,6 +56,11 @@ const centerTarget = document.querySelector('#center-target');
 const meetingDistanceEl = document.querySelector('#meeting-distance');
 const confirmMeetingButton = document.querySelector('#confirm-meeting');
 const useGpsAsMeetingButton = document.querySelector('#use-gps-as-meeting');
+const locationLoading = document.querySelector('#location-loading');
+const locationLoadingTitle = document.querySelector('#location-loading-title');
+const locationLoadingText = document.querySelector('#location-loading-text');
+const retryLocationButton = document.querySelector('#retry-location');
+const cancelLocationButton = document.querySelector('#cancel-location');
 
 const state = {
   step: 'select-driver-start',
@@ -62,6 +80,66 @@ let meetingRouteTimer = null;
 let userWatchId = null;
 let sidebarCollapsed = false;
 let meetingRouteRequestId = 0;
+let locationLoadingTimer = null;
+let locationLoadingMessageIndex = 0;
+
+
+const locationLoadingMessages = [
+  'Aguarde, buscando seu endereço...',
+  'Verificando permissão de localização...',
+  'Tentando obter a melhor precisão possível...',
+  'Preparando o ponto A no mapa...',
+];
+
+function showLocationLoading(message = 'Aguarde, buscando seu endereço...', detail = 'Solicitando permissão do navegador...') {
+  locationLoading.classList.remove('has-error');
+  locationLoading.classList.add('is-visible');
+  locationLoading.setAttribute('aria-hidden', 'false');
+  locationLoadingTitle.textContent = message;
+  locationLoadingText.textContent = detail;
+
+  if (locationLoadingTimer) {
+    window.clearInterval(locationLoadingTimer);
+  }
+
+  locationLoadingMessageIndex = 0;
+  locationLoadingTimer = window.setInterval(() => {
+    locationLoadingMessageIndex = (locationLoadingMessageIndex + 1) % locationLoadingMessages.length;
+    locationLoadingTitle.textContent = locationLoadingMessages[locationLoadingMessageIndex];
+  }, 1550);
+}
+
+function updateLocationLoading(message, detail) {
+  locationLoadingTitle.textContent = message;
+  if (detail) locationLoadingText.textContent = detail;
+}
+
+function showLocationLoadingError(message) {
+  if (locationLoadingTimer) {
+    window.clearInterval(locationLoadingTimer);
+    locationLoadingTimer = null;
+  }
+
+  locationLoading.classList.add('is-visible', 'has-error');
+  locationLoading.setAttribute('aria-hidden', 'false');
+  locationLoadingTitle.textContent = 'Não consegui pegar sua localização';
+  locationLoadingText.textContent = message;
+}
+
+function hideLocationLoading() {
+  if (locationLoadingTimer) {
+    window.clearInterval(locationLoadingTimer);
+    locationLoadingTimer = null;
+  }
+
+  locationLoading.classList.remove('is-visible', 'has-error');
+  locationLoading.setAttribute('aria-hidden', 'true');
+}
+
+function cancelLocationLoading() {
+  hideLocationLoading();
+  resetAll();
+}
 
 function setStatus(message, type = 'normal') {
   state.status = message;
@@ -106,49 +184,88 @@ function selectDriverStart(coordinates) {
   deliveryMap.setMode('locked');
 
   setStep('getting-location');
-  setStatus('Origem do motoboy marcada. Agora vou pedir sua localização automaticamente...');
+  setStatus('Origem do motoboy marcada. Buscando sua localização...');
+  showLocationLoading('Aguarde, buscando seu endereço...', 'Depois que o GPS for encontrado, vou aproximar no mapa e abrir a mira A+.');
   requestCurrentLocation();
 }
 
 function requestCurrentLocation() {
   if (!window.isSecureContext) {
-    setStatus('O Chrome bloqueou a localização porque esta página não está em HTTPS/localhost. Suba no GitHub Pages/Vercel ou rode em http://localhost:5173.', 'error');
+    showLocationLoadingError('O Chrome bloqueou a localização porque esta página não está em HTTPS/localhost. Use GitHub Pages/Vercel ou rode em http://localhost:5173.');
+    setStatus('Localização bloqueada: use HTTPS ou localhost.', 'error');
     return;
   }
 
   if (!navigator.geolocation) {
-    setStatus('Seu navegador não suporta geolocalização. Use o exemplo em João Pessoa para testar.', 'error');
+    showLocationLoadingError('Seu navegador não suporta geolocalização.');
+    setStatus('Seu navegador não suporta geolocalização.', 'error');
     return;
   }
 
+  showLocationLoading('Aguarde, buscando seu endereço...', 'Permita o acesso à localização quando o navegador solicitar.');
+
   navigator.geolocation.getCurrentPosition(
-    (position) => {
+    async (position) => {
       const { latitude, longitude, accuracy } = position.coords;
       const coordinates = [longitude, latitude];
 
       if (!deliveryMap.isInsideBrazil(coordinates)) {
-        setStatus('Sua localização parece estar fora do Brasil. Use o exemplo de João Pessoa para testar.', 'error');
+        showLocationLoadingError('Sua localização parece estar fora do Brasil.');
+        setStatus('Sua localização parece estar fora do Brasil.', 'error');
         return;
       }
 
-      state.userLocation = coordinates;
-      deliveryMap.setUserLocation(coordinates, {
-        accuracy,
-        heading: position.coords.heading,
-      });
-      startUserLocationWatch();
+      updateLocationLoading('Localização encontrada', 'Preparando o ponto A e a área de encontro...');
 
-      setStatus(`Localização recebida com precisão aproximada de ${Math.round(accuracy)}m. Vou aproximar exatamente na sua posição para você escolher o ponto de encontro.`);
+      state.userLocation = coordinates;
+      state.meetingPoint = null;
+      state.meetingPreview = coordinates;
+      state.meetingDistance = 0;
+
+      deliveryMap.setUserLocation(
+        coordinates,
+        {
+          accuracy,
+          heading: position.coords.heading,
+        },
+        { focus: false }
+      );
+
+      startUserLocationWatch();
+      setStep('select-meeting-point');
+      updateMeetingOverlay();
+
+      updateLocationLoading('Ajustando o mapa no seu endereço', 'Vou abrir a mira A+ exatamente sobre sua localização para você escolher a rua/portão.');
+
+      try {
+        await deliveryMap.focusUserLocationForMeeting(coordinates);
+      } catch (error) {
+        console.warn('Falha ao aproximar no ponto A:', error);
+      }
+
+      hideLocationLoading();
       startMeetingSelection();
+      setStatus(`Localização recebida com precisão aproximada de ${Math.round(accuracy)}m. Agora mova o mapa por baixo da mira A+.`);
     },
     (error) => {
       console.error(error);
-      setStatus('Não consegui acessar sua localização. Permita no navegador ou teste em HTTPS/localhost.', 'error');
+
+      let message = 'Permita a localização no navegador e tente novamente.';
+      if (error.code === error.PERMISSION_DENIED) {
+        message = 'A permissão de localização foi negada. Libere nas configurações do navegador e tente novamente.';
+      } else if (error.code === error.POSITION_UNAVAILABLE) {
+        message = 'O navegador não conseguiu determinar sua localização agora.';
+      } else if (error.code === error.TIMEOUT) {
+        message = 'A busca demorou demais. Tente novamente em alguns segundos.';
+      }
+
+      showLocationLoadingError(message);
+      setStatus(message, 'error');
     },
     {
       enableHighAccuracy: true,
-      timeout: 14000,
-      maximumAge: 2500,
+      timeout: 16000,
+      maximumAge: 0,
     }
   );
 }
@@ -189,25 +306,18 @@ function stopUserLocationWatch() {
   userWatchId = null;
 }
 
-async function startMeetingSelection() {
+function startMeetingSelection() {
   if (!state.userLocation) {
     setStatus('Ainda não tenho sua localização GPS.', 'error');
     return;
   }
 
   state.meetingPoint = null;
-  state.meetingPreview = null;
-  state.meetingDistance = null;
+  state.meetingPreview = state.userLocation;
+  state.meetingDistance = 0;
 
   setStep('select-meeting-point');
-  setStatus('Aproximando na sua localização real. Em seguida, mova o mapa até a mira A+ ficar no ponto de encontro.');
-
-  // Espera o painel/mira A+ aparecer no DOM antes de calcular o offset correto da câmera.
-  await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
-
-  await deliveryMap.focusUserLocationForMeeting(state.userLocation);
   deliveryMap.startMeetingPreview(state.userLocation);
-
   setStatus('Arraste o mapa por baixo da mira A+. A linha pontilhada usa a posição real do ponto preto da mira e deve ficar dentro do círculo azul.');
 }
 
@@ -368,7 +478,10 @@ function useDemoFlow() {
 
   setStep('getting-location');
   setStatus('Exemplo carregado. Vou aproximar na sua localização para escolher o ponto de encontro.');
-  startMeetingSelection();
+
+  window.setTimeout(() => {
+    startMeetingSelection();
+  }, 1100);
 }
 
 function requestLocationAgain() {
@@ -379,6 +492,7 @@ function requestLocationAgain() {
 
   setStep('getting-location');
   setStatus('Solicitando localização novamente...');
+  showLocationLoading('Aguarde, buscando seu endereço...', 'Tentando pegar sua localização novamente.');
   requestCurrentLocation();
 }
 
@@ -439,6 +553,8 @@ function render() {
 sidebarToggle.addEventListener('click', toggleSidebar);
 confirmMeetingButton.addEventListener('click', confirmMeetingPoint);
 useGpsAsMeetingButton.addEventListener('click', useGpsAsMeetingPoint);
+retryLocationButton.addEventListener('click', requestLocationAgain);
+cancelLocationButton.addEventListener('click', cancelLocationLoading);
 
 render();
 setStep('select-driver-start');
