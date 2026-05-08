@@ -6,6 +6,8 @@ import { fetchMeetingRoute, fetchRoute } from './services/routingService.js';
 import { presetLocations } from './data/presetRoutes.js';
 import { MEETING_MAX_DISTANCE_METERS } from './config/mapConfig.js';
 
+const INITIAL_MEETING_OFFSET_METERS = 15;
+
 const app = document.querySelector('#app');
 
 app.innerHTML = `
@@ -141,6 +143,67 @@ function cancelLocationLoading() {
   resetAll();
 }
 
+function getInitialMeetingPointNearUser(userCoordinates, driverCoordinates) {
+  const bearing = driverCoordinates
+    ? getBearingDegrees(userCoordinates, driverCoordinates)
+    : 90;
+
+  return moveCoordinateByMeters(userCoordinates, INITIAL_MEETING_OFFSET_METERS, bearing);
+}
+
+function getBearingDegrees(from, to) {
+  const [fromLng, fromLat] = from.map((value) => value * Math.PI / 180);
+  const [toLng, toLat] = to.map((value) => value * Math.PI / 180);
+  const deltaLng = toLng - fromLng;
+
+  const y = Math.sin(deltaLng) * Math.cos(toLat);
+  const x = Math.cos(fromLat) * Math.sin(toLat)
+    - Math.sin(fromLat) * Math.cos(toLat) * Math.cos(deltaLng);
+
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function moveCoordinateByMeters(coordinates, meters, bearingDegrees) {
+  const earthRadiusMeters = 6371008.8;
+  const [lng, lat] = coordinates;
+  const bearing = bearingDegrees * Math.PI / 180;
+  const distanceRatio = meters / earthRadiusMeters;
+  const lat1 = lat * Math.PI / 180;
+  const lng1 = lng * Math.PI / 180;
+
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(distanceRatio)
+    + Math.cos(lat1) * Math.sin(distanceRatio) * Math.cos(bearing)
+  );
+
+  const lng2 = lng1 + Math.atan2(
+    Math.sin(bearing) * Math.sin(distanceRatio) * Math.cos(lat1),
+    Math.cos(distanceRatio) - Math.sin(lat1) * Math.sin(lat2)
+  );
+
+  return [
+    ((lng2 * 180 / Math.PI + 540) % 360) - 180,
+    lat2 * 180 / Math.PI,
+  ];
+}
+
+function calculateDistanceMeters(from, to) {
+  if (!from || !to) return null;
+
+  const [fromLng, fromLat] = from;
+  const [toLng, toLat] = to;
+  const earthRadiusMeters = 6371008.8;
+  const deltaLat = (toLat - fromLat) * Math.PI / 180;
+  const deltaLng = (toLng - fromLng) * Math.PI / 180;
+  const lat1 = fromLat * Math.PI / 180;
+  const lat2 = toLat * Math.PI / 180;
+
+  const a = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function setStatus(message, type = 'normal') {
   state.status = message;
   state.statusType = type;
@@ -215,12 +278,15 @@ function requestCurrentLocation() {
         return;
       }
 
-      updateLocationLoading('Localização encontrada', 'Preparando o ponto A e a área de encontro...');
+      updateLocationLoading('Localização encontrada', 'Criando o ponto A, a área azul e o A+ próximo ao seu endereço...');
+
+      const initialMeetingPoint = getInitialMeetingPointNearUser(coordinates, state.driverStart);
+      const initialMeetingDistance = calculateDistanceMeters(coordinates, initialMeetingPoint);
 
       state.userLocation = coordinates;
       state.meetingPoint = null;
-      state.meetingPreview = coordinates;
-      state.meetingDistance = 0;
+      state.meetingPreview = initialMeetingPoint;
+      state.meetingDistance = initialMeetingDistance;
 
       deliveryMap.setUserLocation(
         coordinates,
@@ -235,17 +301,19 @@ function requestCurrentLocation() {
       setStep('select-meeting-point');
       updateMeetingOverlay();
 
-      updateLocationLoading('Ajustando o mapa no seu endereço', 'Vou abrir a mira A+ exatamente sobre sua localização para você escolher a rua/portão.');
+      updateLocationLoading('Ajustando o mapa no seu endereço', 'O A+ inicial vai nascer a poucos metros do ponto A, dentro da área azul.');
 
       try {
-        await deliveryMap.focusUserLocationForMeeting(coordinates);
+        await deliveryMap.focusUserLocationForMeeting(coordinates, {
+          targetCoordinates: initialMeetingPoint,
+        });
       } catch (error) {
         console.warn('Falha ao aproximar no ponto A:', error);
       }
 
       hideLocationLoading();
-      startMeetingSelection();
-      setStatus(`Localização recebida com precisão aproximada de ${Math.round(accuracy)}m. Agora mova o mapa por baixo da mira A+.`);
+      startMeetingSelection(initialMeetingPoint);
+      setStatus(`Localização recebida com precisão aproximada de ${Math.round(accuracy)}m. O A+ começou a cerca de ${Math.round(initialMeetingDistance)}m do ponto A.`);
     },
     (error) => {
       console.error(error);
@@ -306,19 +374,23 @@ function stopUserLocationWatch() {
   userWatchId = null;
 }
 
-function startMeetingSelection() {
+function startMeetingSelection(initialMeetingPoint = null) {
   if (!state.userLocation) {
     setStatus('Ainda não tenho sua localização GPS.', 'error');
     return;
   }
 
+  const previewPoint = initialMeetingPoint || state.meetingPreview || state.userLocation;
+
   state.meetingPoint = null;
-  state.meetingPreview = state.userLocation;
-  state.meetingDistance = 0;
+  state.meetingPreview = previewPoint;
+  state.meetingDistance = calculateDistanceMeters(state.userLocation, previewPoint);
 
   setStep('select-meeting-point');
   deliveryMap.startMeetingPreview(state.userLocation);
-  setStatus('Arraste o mapa por baixo da mira A+. A linha pontilhada usa a posição real do ponto preto da mira e deve ficar dentro do círculo azul.');
+  deliveryMap.updateMeetingPreviewFromTargetDot();
+  scheduleMeetingRoutePreview(state.meetingPreview);
+  setStatus('Arraste o mapa por baixo da mira A+. O A+ começa perto do ponto A e deve ficar dentro do círculo azul.');
 }
 
 function updateMeetingPreview({ meetingPoint, distance }) {

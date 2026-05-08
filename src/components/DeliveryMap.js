@@ -187,8 +187,10 @@ export class DeliveryMap {
 
 
 
-  async focusUserLocationForMeeting(coordinates) {
+  async focusUserLocationForMeeting(coordinates, options = {}) {
     if (!this.map) return;
+
+    const { targetCoordinates = coordinates } = options;
 
     this.resizeSoon();
     await waitForFrame();
@@ -208,7 +210,10 @@ export class DeliveryMap {
 
       this.map.once('moveend', done);
       this.map.easeTo({
-        center: coordinates,
+        // O target-dot é uma mira fixa na tela. Para o A+ nascer perto do ponto A,
+        // animamos o mapa para colocar a mira sobre targetCoordinates, que já vem
+        // calculado a poucos metros da localização real.
+        center: targetCoordinates,
         zoom: 18.15,
         pitch: 56,
         bearing: this.map.getBearing(),
