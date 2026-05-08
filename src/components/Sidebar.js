@@ -10,6 +10,7 @@ const stepLabels = {
 };
 
 export function renderSidebar(root, state, actions) {
+  const currentStep = stepLabels[state.step] || 'Tracking';
   const targetLabel = state.meetingPoint ? 'Ponto A+ / encontro na rua' : 'Ponto A / GPS real';
 
   root.innerHTML = `
@@ -22,6 +23,7 @@ export function renderSidebar(root, state, actions) {
         </div>
       </div>
 
+      <div class="mobile-step-chip">${currentStep}</div>
 
       <section class="card flow-card">
         <div class="card-title">Fluxo correto</div>

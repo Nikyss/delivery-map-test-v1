@@ -1,12 +1,20 @@
 const DEFAULT_MAPTILER_KEY = 'JQTuzz1KSBoO6671nQor';
-const DEFAULT_MAPTILER_STYLE_URL = `https://api.maptiler.com/maps/019e06bc-77fc-7e5a-abff-5266a7bb1749/style.json?key=${DEFAULT_MAPTILER_KEY}`;
+
+const DEFAULT_MAPTILER_DESKTOP_3D_STYLE_URL = `https://api.maptiler.com/maps/019e06bc-77fc-7e5a-abff-5266a7bb1749/style.json?key=${DEFAULT_MAPTILER_KEY}`;
+const DEFAULT_MAPTILER_MOBILE_2D_STYLE_URL = `https://api.maptiler.com/maps/019e08ec-83f4-7c7f-9473-f8e2374a6768/style.json?key=${DEFAULT_MAPTILER_KEY}`;
 
 const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY || DEFAULT_MAPTILER_KEY;
-const MAPTILER_STYLE_URL = import.meta.env.VITE_MAPTILER_STYLE_URL || DEFAULT_MAPTILER_STYLE_URL;
-const MAP_PROVIDER = import.meta.env.VITE_MAP_PROVIDER || 'maptiler-custom';
+const MAPTILER_DESKTOP_3D_STYLE_URL =
+  import.meta.env.VITE_MAPTILER_DESKTOP_3D_STYLE_URL ||
+  import.meta.env.VITE_MAPTILER_STYLE_URL ||
+  DEFAULT_MAPTILER_DESKTOP_3D_STYLE_URL;
+const MAPTILER_MOBILE_2D_STYLE_URL =
+  import.meta.env.VITE_MAPTILER_MOBILE_2D_STYLE_URL || DEFAULT_MAPTILER_MOBILE_2D_STYLE_URL;
+const MAP_PROVIDER = import.meta.env.VITE_MAP_PROVIDER || 'maptiler-auto';
+const MAP_RENDER_MODE = import.meta.env.VITE_MAP_RENDER_MODE || 'auto'; // auto | 2d | 3d
 
 export const OSRM_BASE_URL = import.meta.env.VITE_OSRM_BASE_URL || 'https://router.project-osrm.org';
-export const MAP_STYLE_NAME = 'MapTiler Custom';
+export const MAP_STYLE_NAME = 'MapTiler Custom Auto';
 
 // MapLibre usa [longitude, latitude]
 export const JOAO_PESSOA_CENTER = [-34.84, -7.148];
@@ -22,6 +30,27 @@ export const MEETING_MAX_DISTANCE_METERS = 100;
 
 export function getMapProviderName() {
   return MAP_PROVIDER;
+}
+
+export function isMobileLikeDevice() {
+  if (typeof window === 'undefined') return false;
+
+  const prefersReducedData = Boolean(navigator?.connection?.saveData);
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches;
+  const smallScreen = window.matchMedia?.('(max-width: 900px)').matches;
+  const lowMemory = Number.isFinite(navigator?.deviceMemory) && navigator.deviceMemory <= 4;
+  const lowCpu = Number.isFinite(navigator?.hardwareConcurrency) && navigator.hardwareConcurrency <= 4;
+
+  return Boolean(prefersReducedData || smallScreen || coarsePointer || lowMemory || lowCpu);
+}
+
+export function getMapRenderMode() {
+  if (MAP_RENDER_MODE === '2d' || MAP_RENDER_MODE === '3d') return MAP_RENDER_MODE;
+  return isMobileLikeDevice() ? '2d' : '3d';
+}
+
+export function shouldUse2DMap() {
+  return getMapRenderMode() === '2d';
 }
 
 function cartoLightStyle() {
@@ -106,11 +135,17 @@ function cartoDarkStyle() {
   };
 }
 
-export function getMapStyle() {
-  // Padrão desta versão: usa o style JSON do MapTiler informado pelo usuário.
-  // Isso evita o bug de tiles/ruas sumindo do OpenFreeMap e mantém o mapa vetorial.
-  if (MAP_PROVIDER === 'maptiler-custom') {
-    return MAPTILER_STYLE_URL;
+export function getMapStyle(renderMode = getMapRenderMode()) {
+  if (MAP_PROVIDER === 'maptiler-auto' || MAP_PROVIDER === 'maptiler-custom') {
+    return renderMode === '2d' ? MAPTILER_MOBILE_2D_STYLE_URL : MAPTILER_DESKTOP_3D_STYLE_URL;
+  }
+
+  if (MAP_PROVIDER === 'maptiler-mobile-2d') {
+    return MAPTILER_MOBILE_2D_STYLE_URL;
+  }
+
+  if (MAP_PROVIDER === 'maptiler-desktop-3d') {
+    return MAPTILER_DESKTOP_3D_STYLE_URL;
   }
 
   if (MAP_PROVIDER === 'maptiler-streets') {
@@ -140,5 +175,5 @@ export function getMapStyle() {
   if (MAP_PROVIDER === 'carto-light') return cartoLightStyle();
   if (MAP_PROVIDER === 'carto-dark') return cartoDarkStyle();
 
-  return MAPTILER_STYLE_URL;
+  return renderMode === '2d' ? MAPTILER_MOBILE_2D_STYLE_URL : MAPTILER_DESKTOP_3D_STYLE_URL;
 }

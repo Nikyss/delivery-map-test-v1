@@ -5,6 +5,7 @@ import {
   BRASIL_CENTER,
   JOAO_PESSOA_CENTER,
   MEETING_MAX_DISTANCE_METERS,
+  getMapRenderMode,
   getMapStyle,
 } from '../config/mapConfig.js';
 import { haversineDistanceMeters } from '../utils/formatters.js';
@@ -25,22 +26,27 @@ export class DeliveryMap {
     this.meetingMarker = null;
     this.driverMarker = null;
     this.previewMoveHandler = null;
+    this.renderMode = getMapRenderMode();
+    this.isLightweightMode = this.renderMode === '2d';
   }
 
   init() {
+    document.body.classList.toggle('map-mode-2d', this.isLightweightMode);
+    document.body.classList.toggle('map-mode-3d', !this.isLightweightMode);
+
     this.map = new maplibregl.Map({
       container: this.container,
-      style: getMapStyle(),
+      style: getMapStyle(this.renderMode),
       center: JOAO_PESSOA_CENTER,
-      zoom: 12.4,
-      pitch: 44,
-      bearing: -8,
+      zoom: this.isLightweightMode ? 12.1 : 12.4,
+      pitch: this.isLightweightMode ? 0 : 44,
+      bearing: this.isLightweightMode ? 0 : -8,
       minZoom: 4.3,
-      maxZoom: 20,
+      maxZoom: this.isLightweightMode ? 18.4 : 20,
       maxBounds: BRASIL_BOUNDS,
       renderWorldCopies: false,
       attributionControl: false,
-      antialias: true,
+      antialias: !this.isLightweightMode,
       preserveDrawingBuffer: false,
       fadeDuration: 120,
       transformRequest: (url, resourceType) => ({
@@ -50,12 +56,14 @@ export class DeliveryMap {
       }),
     });
 
-    this.map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
-    this.map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+    this.map.addControl(new maplibregl.NavigationControl({ visualizePitch: !this.isLightweightMode }), 'top-right');
+    if (!this.isLightweightMode) {
+      this.map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+    }
     this.map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
     this.map.on('load', () => {
-      this.add3DBuildings();
+      if (!this.isLightweightMode) this.add3DBuildings();
       this.ensureRouteLayers();
       this.ensureMeetingLimitLayers();
       this.ensureMeetingLineLayer();
@@ -64,7 +72,7 @@ export class DeliveryMap {
     });
 
     this.map.on('styledata', () => {
-      this.add3DBuildings();
+      if (!this.isLightweightMode) this.add3DBuildings();
       this.ensureRouteLayers();
       this.ensureMeetingLimitLayers();
       this.ensureMeetingLineLayer();
@@ -113,7 +121,7 @@ export class DeliveryMap {
     const [[west, south], [east, north]] = BRASIL_BOUNDS;
 
     if (center.lng < west || center.lng > east || center.lat < south || center.lat > north) {
-      this.map.easeTo({ center: BRASIL_CENTER, zoom: 4.8, pitch: 18, duration: 650 });
+      this.map.easeTo({ center: BRASIL_CENTER, zoom: 4.8, pitch: this.isLightweightMode ? 0 : 18, duration: 650 });
     }
   }
 
@@ -136,8 +144,7 @@ export class DeliveryMap {
       .addTo(this.map);
   }
 
-  setUserLocation(coordinates, details = {}, options = {}) {
-    const { focus = true } = options;
+  setUserLocation(coordinates, details = {}) {
     this.userLocation = coordinates;
 
     if (!this.userMarker) {
@@ -152,15 +159,13 @@ export class DeliveryMap {
 
     this.updateUserLocation(coordinates, details);
 
-    if (focus) {
-      this.map.easeTo({
-        center: coordinates,
-        zoom: 18.15,
-        pitch: 56,
-        bearing: this.map.getBearing(),
-        duration: 1250,
-      });
-    }
+    this.map.easeTo({
+      center: coordinates,
+      zoom: this.isLightweightMode ? 17.25 : 18.15,
+      pitch: this.isLightweightMode ? 0 : 56,
+      bearing: this.isLightweightMode ? 0 : this.map.getBearing(),
+      duration: 1050,
+    });
   }
 
   updateUserLocation(coordinates, details = {}) {
@@ -183,65 +188,6 @@ export class DeliveryMap {
     }
 
     this.setMeetingLimitCircle(coordinates, MEETING_MAX_DISTANCE_METERS);
-  }
-
-
-
-  async focusUserLocationForMeeting(coordinates, options = {}) {
-    if (!this.map) return;
-
-    const { targetCoordinates = coordinates } = options;
-
-    this.resizeSoon();
-    await waitForFrame();
-    await waitForFrame();
-
-    const offset = this.getTargetDotOffset();
-
-    return new Promise((resolve) => {
-      let finished = false;
-      const done = () => {
-        if (finished) return;
-        finished = true;
-        this.map.off('moveend', done);
-        this.resizeSoon();
-        resolve();
-      };
-
-      this.map.once('moveend', done);
-      this.map.easeTo({
-        // O target-dot é uma mira fixa na tela. Para o A+ nascer perto do ponto A,
-        // animamos o mapa para colocar a mira sobre targetCoordinates, que já vem
-        // calculado a poucos metros da localização real.
-        center: targetCoordinates,
-        zoom: 18.15,
-        pitch: 56,
-        bearing: this.map.getBearing(),
-        offset,
-        duration: 1150,
-        essential: true,
-      });
-
-      window.setTimeout(done, 1500);
-    });
-  }
-
-  getTargetDotOffset() {
-    const dot = document.querySelector('.target-dot');
-
-    if (!dot || !this.map) return [0, 0];
-
-    const dotRect = dot.getBoundingClientRect();
-    const mapRect = this.map.getContainer().getBoundingClientRect();
-
-    if (!dotRect.width || !dotRect.height || !mapRect.width || !mapRect.height) return [0, 0];
-
-    const targetX = dotRect.left + dotRect.width / 2 - mapRect.left;
-    const targetY = dotRect.top + dotRect.height / 2 - mapRect.top;
-    const centerX = mapRect.width / 2;
-    const centerY = mapRect.height / 2;
-
-    return [targetX - centerX, targetY - centerY];
   }
 
   startMeetingPreview(userLocation) {
@@ -334,10 +280,10 @@ export class DeliveryMap {
     route.coordinates.forEach((coordinate) => bounds.extend(coordinate));
 
     this.map.fitBounds(bounds, {
-      padding: { top: 90, bottom: 90, left: 440, right: 90 },
-      maxZoom: 17.6,
-      pitch: 50,
-      duration: 900,
+      padding: this.getRoutePadding(),
+      maxZoom: this.isLightweightMode ? 16.8 : 17.6,
+      pitch: this.isLightweightMode ? 0 : 50,
+      duration: 850,
     });
   }
 
@@ -356,6 +302,11 @@ export class DeliveryMap {
 
     element.style.setProperty('--driver-scale', scale);
 
+    // Não prende mais a câmera no motoboy.
+    // O marcador anda, mas a pessoa pode navegar livremente pelo mapa.
+    if (!this.isLightweightMode && this.map.getPitch() < 35) {
+      this.map.easeTo({ pitch: 42, duration: 300 });
+    }
   }
 
   clearRoute() {
@@ -399,7 +350,13 @@ export class DeliveryMap {
     this.clearMeetingLine();
     this.clearMeetingLimitCircle();
     this.setMode('select-driver-start');
-    this.map.easeTo({ center: JOAO_PESSOA_CENTER, zoom: 12.4, pitch: 44, bearing: -8, duration: 650 });
+    this.map.easeTo({
+      center: JOAO_PESSOA_CENTER,
+      zoom: this.isLightweightMode ? 12.1 : 12.4,
+      pitch: this.isLightweightMode ? 0 : 44,
+      bearing: this.isLightweightMode ? 0 : -8,
+      duration: 650,
+    });
   }
 
   removeMarker(name) {
@@ -409,8 +366,23 @@ export class DeliveryMap {
     }
   }
 
+  getRoutePadding() {
+    if (this.isMobileViewport()) {
+      return { top: 90, bottom: 260, left: 34, right: 34 };
+    }
+
+    const sidebarHidden = document.body.classList.contains('sidebar-collapsed');
+    return sidebarHidden
+      ? { top: 90, bottom: 90, left: 90, right: 90 }
+      : { top: 90, bottom: 90, left: 440, right: 90 };
+  }
+
+  isMobileViewport() {
+    return window.matchMedia?.('(max-width: 900px)').matches || this.isLightweightMode;
+  }
+
   add3DBuildings() {
-    if (!this.map || this.map.getLayer('building-3d')) return;
+    if (this.isLightweightMode || !this.map || this.map.getLayer('building-3d')) return;
 
     const sourceId = getAvailableVectorSource(this.map);
     if (!sourceId) return;
@@ -619,10 +591,6 @@ export class DeliveryMap {
       },
     });
   }
-}
-
-function waitForFrame() {
-  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 }
 
 function createMarkerElement(label, extraClass) {
