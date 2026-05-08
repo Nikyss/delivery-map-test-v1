@@ -642,8 +642,14 @@ deliveryMap = new DeliveryMap({
 deliveryMap.init();
 
 simulator = new DriverSimulator({
-  onTick: ({ current, bearing, remaining }) => {
-    deliveryMap.updateDriverPosition({ coordinates: current, bearing, remaining });
+  onTick: ({ current, bearing, remaining, routeIndex }) => {
+    deliveryMap.updateDriverPosition({
+      coordinates: current,
+      bearing,
+      remaining,
+      routeIndex,
+      trimRoute: true,
+    });
   },
   onFinish: () => {
     setStep('arrived');

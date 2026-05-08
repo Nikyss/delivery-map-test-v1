@@ -38,7 +38,14 @@ export class DriverSimulator {
       const remaining = haversineDistanceMeters(current, finalCoordinate);
       const bearing = calculateBearing(current, next);
 
-      this.onTick?.({ current, next, bearing, remaining });
+      this.onTick?.({
+        current,
+        next,
+        bearing,
+        remaining,
+        routeIndex: this.index,
+        totalPoints: this.coordinates.length,
+      });
 
       this.index += 4;
 
@@ -61,6 +68,8 @@ export class DriverSimulator {
       next: finalCoordinate,
       bearing: 0,
       remaining: 0,
+      routeIndex: Math.max(this.coordinates.length - 1, 0),
+      totalPoints: this.coordinates.length,
     });
   }
 

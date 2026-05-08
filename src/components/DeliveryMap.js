@@ -26,6 +26,9 @@ export class DeliveryMap {
     this.meetingMarker = null;
     this.driverMarker = null;
     this.previewMoveHandler = null;
+    this.activeRoute = null;
+    this.activeRouteCoordinates = [];
+    this.routeProgressIndex = 0;
     this.renderMode = getMapRenderMode();
     this.isLightweightMode = this.renderMode === '2d';
   }
@@ -269,15 +272,14 @@ export class DeliveryMap {
   setRoute(route) {
     this.ensureRouteLayers();
 
-    const source = this.map.getSource('route');
-    source?.setData({
-      type: 'Feature',
-      properties: {},
-      geometry: route.geometry,
-    });
+    this.activeRoute = route;
+    this.activeRouteCoordinates = Array.isArray(route.coordinates) ? [...route.coordinates] : [];
+    this.routeProgressIndex = 0;
+
+    this.setVisibleRouteCoordinates(this.activeRouteCoordinates);
 
     const bounds = new maplibregl.LngLatBounds();
-    route.coordinates.forEach((coordinate) => bounds.extend(coordinate));
+    this.activeRouteCoordinates.forEach((coordinate) => bounds.extend(coordinate));
 
     this.map.fitBounds(bounds, {
       padding: this.getRoutePadding(),
@@ -287,7 +289,7 @@ export class DeliveryMap {
     });
   }
 
-  updateDriverPosition({ coordinates, bearing = 0, remaining = 0 }) {
+  updateDriverPosition({ coordinates, bearing = 0, remaining = 0, routeIndex = null, trimRoute = true }) {
     if (!this.driverMarker) return;
 
     this.driverMarker.setLngLat(coordinates);
@@ -302,6 +304,10 @@ export class DeliveryMap {
 
     element.style.setProperty('--driver-scale', scale);
 
+    if (trimRoute) {
+      this.updateRouteProgressFromDriver(coordinates, routeIndex);
+    }
+
     // Não prende mais a câmera no motoboy.
     // O marcador anda, mas a pessoa pode navegar livremente pelo mapa.
     if (!this.isLightweightMode && this.map.getPitch() < 35) {
@@ -309,7 +315,105 @@ export class DeliveryMap {
     }
   }
 
+  /**
+   * Atualiza a rota visível para mostrar apenas o trecho restante.
+   *
+   * Hoje isso é usado pela simulação, mas o mesmo método já serve para GPS real:
+   * quando chegar uma nova posição do motoboy, chame updateLiveDriverLocation().
+   */
+  updateRouteProgressFromDriver(driverCoordinates, routeIndex = null) {
+    if (!this.activeRouteCoordinates.length) return;
+
+    const progressIndex = this.resolveRouteProgressIndex(driverCoordinates, routeIndex);
+    const safeProgressIndex = Math.max(this.routeProgressIndex, progressIndex);
+    this.routeProgressIndex = Math.min(safeProgressIndex, this.activeRouteCoordinates.length - 1);
+
+    const destination = this.activeRouteCoordinates[this.activeRouteCoordinates.length - 1];
+    const tail = this.activeRouteCoordinates.slice(Math.min(this.routeProgressIndex + 1, this.activeRouteCoordinates.length - 1));
+    const visibleCoordinates = [driverCoordinates, ...tail];
+
+    if (visibleCoordinates.length < 2) {
+      visibleCoordinates.push(destination);
+    }
+
+    this.setVisibleRouteCoordinates(visibleCoordinates);
+  }
+
+  updateLiveDriverLocation({ coordinates, bearing = 0, remaining = 0, routeIndex = null }) {
+    const deviationMeters = this.getRouteDeviationMeters(coordinates);
+
+    this.updateDriverPosition({
+      coordinates,
+      bearing,
+      remaining,
+      routeIndex,
+      trimRoute: true,
+    });
+
+    return {
+      deviationMeters,
+      shouldRecalculate: Number.isFinite(deviationMeters) && deviationMeters > 50,
+    };
+  }
+
+  resolveRouteProgressIndex(driverCoordinates, routeIndex = null) {
+    if (Number.isInteger(routeIndex)) {
+      return clamp(routeIndex, 0, this.activeRouteCoordinates.length - 1);
+    }
+
+    const nearest = this.findNearestRoutePoint(driverCoordinates, this.routeProgressIndex);
+    return nearest.index;
+  }
+
+  getRouteDeviationMeters(coordinates) {
+    if (!this.activeRouteCoordinates.length || !coordinates) return null;
+    return this.findNearestRoutePoint(coordinates, this.routeProgressIndex).distanceMeters;
+  }
+
+  findNearestRoutePoint(coordinates, startIndex = 0) {
+    let bestIndex = clamp(startIndex, 0, Math.max(this.activeRouteCoordinates.length - 1, 0));
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    // Janela limitada para evitar voltar muitos pontos e para deixar pronto para GPS real.
+    // Se o motoboy pular/desviar muito, a rotina ainda procura um pouco adiante.
+    const searchStart = Math.max(0, bestIndex - 8);
+    const searchEnd = Math.min(this.activeRouteCoordinates.length - 1, bestIndex + 90);
+
+    for (let index = searchStart; index <= searchEnd; index += 1) {
+      const distance = haversineDistanceMeters(coordinates, this.activeRouteCoordinates[index]);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+
+    return { index: bestIndex, distanceMeters: bestDistance };
+  }
+
+  setVisibleRouteCoordinates(coordinates) {
+    const source = this.map?.getSource('route');
+    if (!source) return;
+
+    if (!Array.isArray(coordinates) || coordinates.length < 2) {
+      source.setData(emptyFeatureCollection());
+      return;
+    }
+
+    source.setData({
+      type: 'Feature',
+      properties: { kind: 'remaining-route' },
+      geometry: {
+        type: 'LineString',
+        coordinates,
+      },
+    });
+  }
+
   clearRoute() {
+    this.activeRoute = null;
+    this.activeRouteCoordinates = [];
+    this.routeProgressIndex = 0;
+
     if (this.map?.getSource('route')) {
       this.map.getSource('route').setData(emptyFeatureCollection());
     }
@@ -647,6 +751,10 @@ function emptyFeatureCollection() {
     type: 'FeatureCollection',
     features: [],
   };
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function getAvailableVectorSource(map) {
