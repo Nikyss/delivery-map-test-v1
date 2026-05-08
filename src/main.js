@@ -138,11 +138,8 @@ function requestCurrentLocation() {
       });
       startUserLocationWatch();
 
-      setStatus(`Localização recebida com precisão aproximada de ${Math.round(accuracy)}m. Vou aproximar no mapa para você escolher o ponto de encontro.`);
-
-      window.setTimeout(() => {
-        startMeetingSelection();
-      }, 1100);
+      setStatus(`Localização recebida com precisão aproximada de ${Math.round(accuracy)}m. Vou aproximar exatamente na sua posição para você escolher o ponto de encontro.`);
+      startMeetingSelection();
     },
     (error) => {
       console.error(error);
@@ -192,18 +189,25 @@ function stopUserLocationWatch() {
   userWatchId = null;
 }
 
-function startMeetingSelection() {
+async function startMeetingSelection() {
   if (!state.userLocation) {
     setStatus('Ainda não tenho sua localização GPS.', 'error');
     return;
   }
 
   state.meetingPoint = null;
-  state.meetingPreview = state.userLocation;
-  state.meetingDistance = 0;
+  state.meetingPreview = null;
+  state.meetingDistance = null;
 
   setStep('select-meeting-point');
+  setStatus('Aproximando na sua localização real. Em seguida, mova o mapa até a mira A+ ficar no ponto de encontro.');
+
+  // Espera o painel/mira A+ aparecer no DOM antes de calcular o offset correto da câmera.
+  await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+
+  await deliveryMap.focusUserLocationForMeeting(state.userLocation);
   deliveryMap.startMeetingPreview(state.userLocation);
+
   setStatus('Arraste o mapa por baixo da mira A+. A linha pontilhada usa a posição real do ponto preto da mira e deve ficar dentro do círculo azul.');
 }
 
@@ -364,10 +368,7 @@ function useDemoFlow() {
 
   setStep('getting-location');
   setStatus('Exemplo carregado. Vou aproximar na sua localização para escolher o ponto de encontro.');
-
-  window.setTimeout(() => {
-    startMeetingSelection();
-  }, 1100);
+  startMeetingSelection();
 }
 
 function requestLocationAgain() {

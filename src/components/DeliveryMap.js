@@ -150,14 +150,105 @@ export class DeliveryMap {
     }
 
     this.updateUserLocation(coordinates, details);
+  }
 
-    this.map.easeTo({
+  async focusUserLocationForMeeting(coordinates) {
+    if (!this.map || !coordinates) return;
+
+    // A mira A+ não fica necessariamente no centro real do mapa, porque existe sidebar.
+    // Então a câmera precisa colocar o GPS exatamente embaixo da target-dot, não no centro do viewport.
+    const offset = this.getTargetDotOffset();
+
+    await this.easeToAndWait({
       center: coordinates,
-      zoom: 18.15,
-      pitch: 56,
+      offset,
+      zoom: 17.25,
+      pitch: 48,
       bearing: this.map.getBearing(),
-      duration: 1250,
+      duration: 850,
+      essential: true,
     });
+
+    // Pequena correção final: se o navegador/MapLibre arredondar pixels, alinha de novo.
+    this.alignCoordinateUnderTargetDot(coordinates);
+    await this.wait(80);
+  }
+
+  getTargetDotOffset() {
+    if (!this.map) return [0, 0];
+
+    const dot = document.querySelector('.target-dot');
+    const mapRect = this.map.getContainer().getBoundingClientRect();
+
+    if (!dot || !mapRect.width || !mapRect.height) return [0, 0];
+
+    const dotRect = dot.getBoundingClientRect();
+
+    if (!dotRect.width || !dotRect.height) return [0, 0];
+
+    const dotCenterX = dotRect.left + dotRect.width / 2 - mapRect.left;
+    const dotCenterY = dotRect.top + dotRect.height / 2 - mapRect.top;
+    const mapCenterX = mapRect.width / 2;
+    const mapCenterY = mapRect.height / 2;
+
+    return [dotCenterX - mapCenterX, dotCenterY - mapCenterY];
+  }
+
+  alignCoordinateUnderTargetDot(coordinates) {
+    if (!this.map || !coordinates) return;
+
+    const dotPoint = this.getTargetDotPoint();
+    if (!dotPoint) return;
+
+    const coordinatePoint = this.map.project(coordinates);
+    const deltaX = coordinatePoint.x - dotPoint.x;
+    const deltaY = coordinatePoint.y - dotPoint.y;
+
+    if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+
+    // Move a câmera em pixels para que o marcador A fique exatamente embaixo da mira A+.
+    this.map.panBy([deltaX, deltaY], { duration: 0 });
+  }
+
+  getTargetDotPoint() {
+    const dot = document.querySelector('.target-dot');
+
+    if (!dot || !this.map) return null;
+
+    const dotRect = dot.getBoundingClientRect();
+    const mapRect = this.map.getContainer().getBoundingClientRect();
+
+    if (!dotRect.width || !dotRect.height) return null;
+
+    return {
+      x: dotRect.left + dotRect.width / 2 - mapRect.left,
+      y: dotRect.top + dotRect.height / 2 - mapRect.top,
+    };
+  }
+
+  easeToAndWait(options) {
+    return new Promise((resolve) => {
+      if (!this.map) {
+        resolve();
+        return;
+      }
+
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        this.map.off('moveend', finish);
+        resolve();
+      };
+
+      this.map.once('moveend', finish);
+      this.map.easeTo(options);
+      window.setTimeout(finish, (options.duration || 0) + 240);
+    });
+  }
+
+  wait(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
   updateUserLocation(coordinates, details = {}) {
@@ -273,9 +364,9 @@ export class DeliveryMap {
 
     this.map.fitBounds(bounds, {
       padding: { top: 90, bottom: 90, left: 440, right: 90 },
-      maxZoom: 17.6,
-      pitch: 50,
-      duration: 900,
+      maxZoom: 16.6,
+      pitch: 46,
+      duration: 800,
     });
   }
 
@@ -294,12 +385,8 @@ export class DeliveryMap {
 
     element.style.setProperty('--driver-scale', scale);
 
-    this.map.easeTo({
-      center: coordinates,
-      zoom: Math.min(Math.max(this.map.getZoom(), 15.6), 18.2),
-      pitch: 50,
-      duration: 420,
-    });
+    // Não prendemos mais a câmera no motoboy.
+    // O usuário pode andar livremente pelo mapa enquanto a simulação continua.
   }
 
   clearRoute() {
