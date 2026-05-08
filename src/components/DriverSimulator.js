@@ -9,6 +9,7 @@ export class DriverSimulator {
     this.index = 0;
     this.coordinates = [];
     this.finishTimer = null;
+    this.paused = false;
   }
 
   start(coordinates) {
@@ -21,43 +22,106 @@ export class DriverSimulator {
 
     this.coordinates = coordinates;
     this.index = 0;
+    this.paused = false;
     this.onStatus?.('Motoboy a caminho de você...', 'normal');
+    this.startTimer();
+  }
+
+  /**
+   * Prepara a simulação sem iniciar o movimento.
+   * Útil para testes temporários, como arrastar a moto para simular desvio.
+   */
+  prepare(coordinates, index = 0) {
+    this.stop(false);
+
+    if (!coordinates || coordinates.length < 2) {
+      this.coordinates = [];
+      this.index = 0;
+      this.paused = false;
+      return;
+    }
+
+    this.coordinates = coordinates;
+    this.index = Math.max(0, Math.min(index, coordinates.length - 1));
+    this.paused = true;
+  }
+
+  pause(showStatus = true) {
+    if (!this.isRunning()) return false;
+
+    this.clearTimers();
+    this.paused = true;
+
+    if (showStatus) {
+      this.onStatus?.('Simulação pausada. O motoboy ficou parado no ponto atual.', 'normal');
+    }
+
+    return true;
+  }
+
+  resume(showStatus = true) {
+    if (!this.coordinates?.length || !this.paused) return false;
+
+    this.paused = false;
+
+    if (showStatus) {
+      this.onStatus?.('Simulação retomada. Motoboy voltou a se mover.', 'normal');
+    }
+
+    this.startTimer();
+    return true;
+  }
+
+  isRunning() {
+    return Boolean(this.timer || this.finishTimer);
+  }
+
+  isPaused() {
+    return this.paused;
+  }
+
+  startTimer() {
+    this.clearTimers();
 
     this.timer = window.setInterval(() => {
-      const finalCoordinate = this.coordinates[this.coordinates.length - 1];
+      this.tick();
+    }, 260);
+  }
 
-      if (this.index >= this.coordinates.length) {
+  tick() {
+    const finalCoordinate = this.coordinates[this.coordinates.length - 1];
+
+    if (this.index >= this.coordinates.length) {
+      this.emitFinalPosition(finalCoordinate);
+      this.stop(false);
+      this.onFinish?.();
+      return;
+    }
+
+    const current = this.coordinates[this.index];
+    const next = this.coordinates[Math.min(this.index + 1, this.coordinates.length - 1)];
+    const remaining = haversineDistanceMeters(current, finalCoordinate);
+    const bearing = calculateBearing(current, next);
+
+    this.onTick?.({
+      current,
+      next,
+      bearing,
+      remaining,
+      routeIndex: this.index,
+      totalPoints: this.coordinates.length,
+    });
+
+    this.index += 4;
+
+    // Se o salto pulou o último ponto, força a moto a encostar exatamente no destino.
+    if (this.index >= this.coordinates.length) {
+      this.finishTimer = window.setTimeout(() => {
         this.emitFinalPosition(finalCoordinate);
         this.stop(false);
         this.onFinish?.();
-        return;
-      }
-
-      const current = this.coordinates[this.index];
-      const next = this.coordinates[Math.min(this.index + 1, this.coordinates.length - 1)];
-      const remaining = haversineDistanceMeters(current, finalCoordinate);
-      const bearing = calculateBearing(current, next);
-
-      this.onTick?.({
-        current,
-        next,
-        bearing,
-        remaining,
-        routeIndex: this.index,
-        totalPoints: this.coordinates.length,
-      });
-
-      this.index += 4;
-
-      // Se o salto pulou o último ponto, força a moto a encostar exatamente no destino.
-      if (this.index >= this.coordinates.length) {
-        this.finishTimer = window.setTimeout(() => {
-          this.emitFinalPosition(finalCoordinate);
-          this.stop(false);
-          this.onFinish?.();
-        }, 230);
-      }
-    }, 260);
+      }, 230);
+    }
   }
 
   emitFinalPosition(finalCoordinate) {
@@ -74,6 +138,15 @@ export class DriverSimulator {
   }
 
   stop(showStatus = true) {
+    this.clearTimers();
+    this.paused = false;
+
+    if (showStatus) {
+      this.onStatus?.('Simulação parada.', 'normal');
+    }
+  }
+
+  clearTimers() {
     if (this.timer) {
       window.clearInterval(this.timer);
       this.timer = null;
@@ -82,10 +155,6 @@ export class DriverSimulator {
     if (this.finishTimer) {
       window.clearTimeout(this.finishTimer);
       this.finishTimer = null;
-    }
-
-    if (showStatus) {
-      this.onStatus?.('Simulação parada.', 'normal');
     }
   }
 }

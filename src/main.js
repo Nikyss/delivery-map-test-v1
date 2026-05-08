@@ -72,6 +72,10 @@ const state = {
   meetingPoint: null,
   meetingDistance: null,
   route: null,
+  driverPaused: false,
+  driverDragMode: false,
+  driverDeviationMeters: null,
+  isRecalculatingDeviation: false,
   status: 'Clique no mapa para marcar de onde sai o motoboy/restaurante.',
   statusType: 'normal',
 };
@@ -136,6 +140,21 @@ function hideLocationLoading() {
 
   locationLoading.classList.remove('is-visible', 'has-error');
   locationLoading.setAttribute('aria-hidden', 'true');
+}
+
+function setDriverDevState({ paused = state.driverPaused, dragMode = state.driverDragMode, deviationMeters = state.driverDeviationMeters, recalculating = state.isRecalculatingDeviation } = {}) {
+  state.driverPaused = paused;
+  state.driverDragMode = dragMode;
+  state.driverDeviationMeters = deviationMeters;
+  state.isRecalculatingDeviation = recalculating;
+  document.body.classList.toggle('driver-dev-drag-mode', Boolean(dragMode));
+  render();
+}
+
+function disableDriverDragMode() {
+  state.driverDragMode = false;
+  document.body.classList.remove('driver-dev-drag-mode');
+  deliveryMap?.setDriverDragMode(false);
 }
 
 function cancelLocationLoading() {
@@ -521,6 +540,9 @@ async function calculateRouteAndStartSimulation() {
     });
 
     state.route = route;
+    state.driverPaused = false;
+    state.driverDeviationMeters = null;
+    state.isRecalculatingDeviation = false;
     deliveryMap.setRoute(route);
 
     setStep('driving');
@@ -541,6 +563,10 @@ function useDemoFlow() {
   state.meetingPreview = state.userLocation;
   state.meetingDistance = 0;
   state.route = null;
+  state.driverPaused = false;
+  state.driverDragMode = false;
+  state.driverDeviationMeters = null;
+  state.isRecalculatingDeviation = false;
 
   simulator.stop(false);
   deliveryMap.reset();
@@ -574,12 +600,136 @@ function simulateDriverAgain() {
     return;
   }
 
+  disableDriverDragMode();
+  state.driverPaused = false;
+  state.driverDeviationMeters = null;
+  state.isRecalculatingDeviation = false;
   deliveryMap.setDriverMarker(state.driverStart);
   simulator.start(state.route.coordinates);
+  render();
+}
+
+function toggleSimulationPause() {
+  if (!state.route?.coordinates?.length) {
+    setStatus('Ainda não existe uma rota calculada para pausar.', 'error');
+    return;
+  }
+
+  if (state.driverPaused) {
+    disableDriverDragMode();
+    const resumed = simulator.resume(false);
+    setDriverDevState({ paused: !resumed, dragMode: false });
+    setStatus(resumed ? 'Simulação retomada. Motoboy voltou a andar.' : 'Não foi possível retomar a simulação.', resumed ? 'success' : 'error');
+    return;
+  }
+
+  const paused = simulator.pause(false);
+
+  if (!paused) {
+    simulator.prepare(deliveryMap.getVisibleRouteCoordinates().length ? deliveryMap.getVisibleRouteCoordinates() : state.route.coordinates);
+  }
+
+  setDriverDevState({ paused: true });
+  setStatus('🧪 TESTE: simulação pausada. O motoboy ficou parado para você analisar a rota.', 'normal');
 }
 
 function stopSimulation() {
   simulator.stop(true);
+  disableDriverDragMode();
+  setDriverDevState({ paused: false, dragMode: false, deviationMeters: null, recalculating: false });
+}
+
+function toggleDriverDragMode() {
+  if (!state.route?.coordinates?.length || state.step !== 'driving') {
+    setStatus('O modo de arrastar só fica disponível durante uma entrega simulada.', 'error');
+    return;
+  }
+
+  const nextDragMode = !state.driverDragMode;
+
+  if (!nextDragMode) {
+    disableDriverDragMode();
+    setDriverDevState({ dragMode: false });
+    setStatus('🧪 TESTE: modo de arrastar moto desativado.', 'normal');
+    return;
+  }
+
+  simulator.pause(false);
+  state.driverPaused = true;
+
+  const enabled = deliveryMap.setDriverDragMode(true, handleDevDriverDragEnd);
+
+  if (!enabled) {
+    setStatus('Ainda não existe marcador da moto para arrastar.', 'error');
+    return;
+  }
+
+  setDriverDevState({ paused: true, dragMode: true, deviationMeters: null, recalculating: false });
+  setStatus('🧪 TESTE TEMPORÁRIO: arraste a moto para outra rua e solte para testar desvio/recalcular rota.', 'normal');
+}
+
+async function handleDevDriverDragEnd(coordinates) {
+  if (!coordinates || !deliveryMap.isInsideBrazil(coordinates)) {
+    setStatus('Solte a moto dentro do Brasil para testar o desvio.', 'error');
+    return;
+  }
+
+  const destination = getFinalDestination();
+
+  if (!destination) {
+    setStatus('Não existe destino final para recalcular a rota.', 'error');
+    return;
+  }
+
+  const remaining = calculateDistanceMeters(coordinates, destination) || 0;
+  const deviation = deliveryMap.updateLiveDriverLocation({
+    coordinates,
+    bearing: 0,
+    remaining,
+    routeIndex: null,
+  });
+
+  const deviationMeters = deviation.deviationMeters;
+
+  if (!deviation.shouldRecalculate) {
+    const visibleRoute = deliveryMap.getVisibleRouteCoordinates();
+    simulator.prepare(visibleRoute.length >= 2 ? visibleRoute : state.route.coordinates);
+    setDriverDevState({ paused: true, dragMode: true, deviationMeters, recalculating: false });
+    setStatus(`🧪 TESTE: moto reposicionada. Desvio de ${Math.round(deviationMeters || 0)}m, ainda dentro da tolerância.`, 'normal');
+    return;
+  }
+
+  setDriverDevState({ paused: true, dragMode: true, deviationMeters, recalculating: true });
+  setStatus(`🧪 TESTE: desvio de ${Math.round(deviationMeters)}m detectado. Recalculando rota da moto até o destino...`, 'normal');
+
+  try {
+    const newRoute = await fetchRoute({
+      from: coordinates,
+      to: destination,
+    });
+
+    state.route = newRoute;
+    deliveryMap.setRoute(newRoute);
+    deliveryMap.setDriverMarker(coordinates);
+    deliveryMap.setDriverDragMode(true, handleDevDriverDragEnd);
+    deliveryMap.updateDriverPosition({
+      coordinates,
+      bearing: 0,
+      remaining: newRoute.distance,
+      routeIndex: null,
+      trimRoute: true,
+    });
+
+    const visibleRoute = deliveryMap.getVisibleRouteCoordinates();
+    simulator.prepare(visibleRoute.length >= 2 ? visibleRoute : newRoute.coordinates);
+
+    setDriverDevState({ paused: true, dragMode: true, deviationMeters, recalculating: false });
+    setStatus(`🧪 TESTE: rota recalculada após desvio de ${Math.round(deviationMeters)}m. Clique em “Continuar” para seguir.`, 'success');
+  } catch (error) {
+    console.error(error);
+    setDriverDevState({ paused: true, dragMode: true, deviationMeters, recalculating: false });
+    setStatus('Não consegui recalcular a rota depois do desvio. Tente soltar a moto em outra rua.', 'error');
+  }
 }
 
 function resetAll() {
@@ -597,6 +747,11 @@ function resetAll() {
   state.meetingPoint = null;
   state.meetingDistance = null;
   state.route = null;
+  state.driverPaused = false;
+  state.driverDragMode = false;
+  state.driverDeviationMeters = null;
+  state.isRecalculatingDeviation = false;
+  document.body.classList.remove('driver-dev-drag-mode');
   deliveryMap.reset();
   setStep('select-driver-start');
   setStatus('Tudo limpo. Clique no mapa para marcar de onde sai o motoboy/restaurante.');
@@ -618,6 +773,8 @@ function render() {
     requestLocationAgain,
     simulateDriverAgain,
     stopSimulation,
+    toggleSimulationPause,
+    toggleDriverDragMode,
     resetAll,
   });
 }
@@ -652,6 +809,10 @@ simulator = new DriverSimulator({
     });
   },
   onFinish: () => {
+    disableDriverDragMode();
+    state.driverPaused = false;
+    state.driverDeviationMeters = null;
+    state.isRecalculatingDeviation = false;
     setStep('arrived');
     setStatus(`Motoboy chegou ao ${getFinalDestinationName()}.`, 'success');
   },

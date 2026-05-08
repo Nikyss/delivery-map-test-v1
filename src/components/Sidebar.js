@@ -12,6 +12,12 @@ const stepLabels = {
 export function renderSidebar(root, state, actions) {
   const currentStep = stepLabels[state.step] || 'Tracking';
   const targetLabel = state.meetingPoint ? 'Ponto A+ / encontro na rua' : 'Ponto A / GPS real';
+  const pauseLabel = state.driverPaused ? 'Continuar simulação' : 'Pausar simulação';
+  const dragLabel = state.driverDragMode ? 'Desativar arrastar moto' : 'Ativar arrastar moto';
+  const routeReady = Boolean(state.route?.coordinates?.length);
+  const deviationText = Number.isFinite(state.driverDeviationMeters)
+    ? `${Math.round(state.driverDeviationMeters)}m da rota`
+    : 'Ainda não testado';
 
   root.innerHTML = `
     <aside class="sidebar">
@@ -56,6 +62,20 @@ export function renderSidebar(root, state, actions) {
         </div>
       </section>
 
+      <section class="card dev-test-card">
+        <div class="dev-test-kicker">🧪 Teste temporário</div>
+        <div class="card-title">Simular desvio do motoboy</div>
+        <p class="dev-test-text">
+          Ferramentas apenas para teste. Use para validar pausa, desvio e recálculo antes de integrar motoboy real.
+        </p>
+        <button id="toggle-pause-driver" class="secondary-btn" ${routeReady ? '' : 'disabled'}>${pauseLabel}</button>
+        <button id="toggle-drag-driver" class="ghost-btn ${state.driverDragMode ? 'is-active' : ''}" ${routeReady ? '' : 'disabled'}>${dragLabel}</button>
+        <div class="dev-test-status ${state.driverDragMode ? 'is-active' : ''}">
+          <span>Desvio:</span>
+          <strong>${state.isRecalculatingDeviation ? 'Recalculando rota...' : deviationText}</strong>
+        </div>
+      </section>
+
       <section class="card">
         <div class="card-title">Pontos da entrega</div>
         <div class="info-box ${state.driverStart ? 'is-filled' : ''}">
@@ -97,5 +117,7 @@ export function renderSidebar(root, state, actions) {
   root.querySelector('#demo-flow').addEventListener('click', actions.useDemoFlow);
   root.querySelector('#simulate-again').addEventListener('click', actions.simulateDriverAgain);
   root.querySelector('#stop-driver').addEventListener('click', actions.stopSimulation);
+  root.querySelector('#toggle-pause-driver').addEventListener('click', actions.toggleSimulationPause);
+  root.querySelector('#toggle-drag-driver').addEventListener('click', actions.toggleDriverDragMode);
   root.querySelector('#reset-map').addEventListener('click', actions.resetAll);
 }

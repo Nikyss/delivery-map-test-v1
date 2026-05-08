@@ -28,7 +28,9 @@ export class DeliveryMap {
     this.previewMoveHandler = null;
     this.activeRoute = null;
     this.activeRouteCoordinates = [];
+    this.visibleRouteCoordinates = [];
     this.routeProgressIndex = 0;
+    this.driverDragEndHandler = null;
     this.renderMode = getMapRenderMode();
     this.isLightweightMode = this.renderMode === '2d';
   }
@@ -258,15 +260,52 @@ export class DeliveryMap {
   }
 
   setDriverMarker(coordinates) {
+    const wasDraggable = Boolean(this.driverMarker?.isDraggable?.());
+    const previousDragHandler = this.driverDragEndHandler;
+
     this.removeMarker('driverMarker');
 
     this.driverMarker = new maplibregl.Marker({
       element: createMarkerElement('🛵', 'driver-marker'),
       anchor: 'center',
+      draggable: wasDraggable,
     })
       .setLngLat(coordinates)
       .setPopup(new maplibregl.Popup({ offset: 22 }).setHTML('<strong>Motoboy</strong>'))
       .addTo(this.map);
+
+    if (wasDraggable && previousDragHandler) {
+      this.setDriverDragMode(true, previousDragHandler);
+    }
+  }
+
+  setDriverDragMode(enabled, onDragEnd) {
+    if (!this.driverMarker) return false;
+
+    if (this.driverDragEndHandler) {
+      this.driverMarker.off('dragend', this.driverDragEndHandler);
+      this.driverDragEndHandler = null;
+    }
+
+    this.driverMarker.setDraggable(Boolean(enabled));
+    this.driverMarker.getElement().classList.toggle('is-dev-draggable', Boolean(enabled));
+
+    if (enabled) {
+      this.driverDragEndHandler = () => {
+        const lngLat = this.driverMarker.getLngLat();
+        onDragEnd?.([lngLat.lng, lngLat.lat]);
+      };
+
+      this.driverMarker.on('dragend', this.driverDragEndHandler);
+    }
+
+    return true;
+  }
+
+  getDriverCoordinates() {
+    if (!this.driverMarker) return null;
+    const lngLat = this.driverMarker.getLngLat();
+    return [lngLat.lng, lngLat.lat];
   }
 
   setRoute(route) {
@@ -395,9 +434,12 @@ export class DeliveryMap {
     if (!source) return;
 
     if (!Array.isArray(coordinates) || coordinates.length < 2) {
+      this.visibleRouteCoordinates = [];
       source.setData(emptyFeatureCollection());
       return;
     }
+
+    this.visibleRouteCoordinates = [...coordinates];
 
     source.setData({
       type: 'Feature',
@@ -409,9 +451,14 @@ export class DeliveryMap {
     });
   }
 
+  getVisibleRouteCoordinates() {
+    return Array.isArray(this.visibleRouteCoordinates) ? [...this.visibleRouteCoordinates] : [];
+  }
+
   clearRoute() {
     this.activeRoute = null;
     this.activeRouteCoordinates = [];
+    this.visibleRouteCoordinates = [];
     this.routeProgressIndex = 0;
 
     if (this.map?.getSource('route')) {
@@ -465,6 +512,11 @@ export class DeliveryMap {
 
   removeMarker(name) {
     if (this[name]) {
+      if (name === 'driverMarker' && this.driverDragEndHandler) {
+        this[name].off('dragend', this.driverDragEndHandler);
+        this.driverDragEndHandler = null;
+      }
+
       this[name].remove();
       this[name] = null;
     }

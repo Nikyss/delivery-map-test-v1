@@ -980,3 +980,122 @@ body.map-mode-2d .maplibregl-canvas {
     display: none;
   }
 }
+
+/* Patch v9: controles temporários de teste para pausa/desvio/recalcular rota */
+.dev-test-card {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: #fffbeb;
+}
+
+.dev-test-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.14);
+  font-size: 11px;
+  font-weight: 1000;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dev-test-text {
+  margin: 0 0 10px;
+  color: #78350f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dev-test-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.dev-test-card .ghost-btn.is-active {
+  color: #ffffff;
+  border-color: #111827;
+  background: #111827;
+}
+
+.dev-test-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-radius: 14px;
+  border: 1px dashed rgba(146, 64, 14, 0.28);
+  color: #92400e;
+  background: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+}
+
+.dev-test-status span {
+  color: #92400e;
+  font-weight: 800;
+}
+
+.dev-test-status strong {
+  color: #451a03;
+  font-weight: 1000;
+  text-align: right;
+}
+
+.dev-test-status.is-active {
+  border-color: rgba(17, 24, 39, 0.32);
+  background: #ffffff;
+}
+
+.driver-marker.is-dev-draggable {
+  cursor: grab;
+  box-shadow:
+    0 0 0 7px rgba(245, 158, 11, 0.2),
+    0 16px 34px rgba(15, 23, 42, 0.32);
+  animation: devDriverPulse 1.2s ease-in-out infinite;
+}
+
+.driver-marker.is-dev-draggable:active {
+  cursor: grabbing;
+}
+
+body.driver-dev-drag-mode .map-hint {
+  background: rgba(146, 64, 14, 0.92);
+}
+
+@keyframes devDriverPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 7px rgba(245, 158, 11, 0.16),
+      0 16px 34px rgba(15, 23, 42, 0.28);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 13px rgba(245, 158, 11, 0.07),
+      0 16px 34px rgba(15, 23, 42, 0.34);
+  }
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .dev-test-card {
+    display: block;
+  }
+
+  .dev-test-text {
+    display: none;
+  }
+
+  .dev-test-kicker {
+    margin-bottom: 6px;
+    font-size: 10px;
+  }
+
+  .dev-test-status {
+    padding: 8px 9px;
+    font-size: 11px;
+  }
+}
